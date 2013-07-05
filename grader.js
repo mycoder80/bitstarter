@@ -20,6 +20,8 @@ References:
 */
 
 var fs = require('fs');
+var rest = require('restler');
+var cheerio = require('cheerio');
 var program = require('commander');
 var cheerio = require('cheerio');
 var HTMLFILE_DEFAULT = "index.html";
@@ -42,8 +44,37 @@ var loadChecks = function(checksfile) {
   return JSON.parse(fs.readFileSync(checksfile));
 };
 
+var checkUrlOrHtmlFile = function(url, htmlfile, checksfile) {
+  if (url) {
+    return checkUrl(url, checksfile);
+  }
+  return checkHtmlFile(htmlfile, checksfile);
+};
+
+var checkUrl = function(url, checksfile, callback) {
+  rest.get(url).on('complete', function(result) {
+    if (result instanceof Error) {
+      console.log('Error: ' + result.message);
+      process.exit(1); // http://nodejs.org/api/process.html#process_process_exit_code
+    }
+    console.log(result);
+    callback(result, checksfile);
+  });
+}
+
 var checkHtmlFile = function(htmlfile, checksfile) {
   $ = cheerioHtmlFile(htmlfile);
+  var checks = loadChecks(checksfile).sort();
+  var out = {};
+  for(var ii in checks) {
+    var present = $(checks[ii]).length > 0;
+    out[checks[ii]] = present;
+  }
+  return out;
+};
+
+var checkUrlResponse = function(response, checksfile) {
+  $ = cheerio.load(response);
   var checks = loadChecks(checksfile).sort();
   var out = {};
   for(var ii in checks) {
@@ -59,14 +90,33 @@ var clone = function(fn) {
   return fn.bind({});
 };
 
+var writeOutputToFile = function(output) {
+  fs.writeFileSync('output.txt', output);
+}
+
 if(require.main == module) {
   program
     .option('-c, --checks <check_file>', 'Path to checks.json', clone(assertFileExists), CHECKSFILE_DEFAULT)
     .option('-f, --file <html_file>', 'Path to index.html', clone(assertFileExists), HTMLFILE_DEFAULT)
+    .option('-u, --url <url>', 'Url to the app page')
     .parse(process.argv);
-  var checkJson = checkHtmlFile(program.file, program.checks);
-  var outJson = JSON.stringify(checkJson, null, 4);
-  console.log(outJson);
+  if (program.url) {
+    rest.get(program.url).on('complete', function(result) {
+      if (result instanceof Error) {
+        console.log('Error: ' + result.message);
+        process.exit(1); // http://nodejs.org/api/process.html#process_process_exit_code
+      }
+      var checkJson = checkUrlResponse(result, program.checks);
+      var outJson = JSON.stringify(checkJson, null, 4);
+      console.log(outJson);
+      writeOutputToFile(outJson);
+    });
+  } else {
+    var checkJson = checkHtmlFile(program.file, program.checks);
+    var outJson = JSON.stringify(checkJson, null, 4);
+    console.log(outJson);
+      writeOutputToFile(outJson);
+  }
 } else {
   exports.checkHtmlFile = checkHtmlFile;
 }
